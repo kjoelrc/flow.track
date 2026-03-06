@@ -208,6 +208,7 @@
           <div class="stat"><div class="stat-val" id="stat-all-avg">—</div><div class="stat-lbl">Overall Avg</div></div>
           <div class="stat"><div class="stat-val" id="stat-work-best-all">—</div><div class="stat-lbl">Overall Best</div></div>
         </div>
+        <div id="work-weekly-summary" style="display:none;margin-top:1rem;padding:0.75rem;border:1px solid var(--border);border-radius:8px;background:var(--surface2);font-family:'Roboto Mono',monospace;font-size:0.65rem;line-height:1.6;color:var(--muted);"></div>
       </div>
     </div>
 
@@ -216,8 +217,8 @@
       <div class="chart-header">
         <span class="chart-title">flow<span class="chart-title-dot">.</span>day</span>
         <div class="view-btns">
-          <button class="view-btn" id="fbtn-week" onclick="setView('full','week')">Week</button>
-          <button class="view-btn active" id="fbtn-month" onclick="setView('full','month')">Month</button>
+          <button class="view-btn active" id="fbtn-week" onclick="setView('full','week')">Week</button>
+          <button class="view-btn" id="fbtn-month" onclick="setView('full','month')">Month</button>
           <button class="view-btn" id="fbtn-year" onclick="setView('full','year')">Year</button>
         </div>
       </div>
@@ -248,7 +249,7 @@
           <div class="stat"><div class="stat-val" id="stat-fd-alltime">—</div><div class="stat-lbl">Overall Avg</div></div>
           <div class="stat"><div class="stat-val" id="stat-fd-best-all">—</div><div class="stat-lbl">Overall Best</div></div>
         </div>
-
+        <div id="day-weekly-summary" style="display:none;margin-top:1rem;padding:0.75rem;border:1px solid var(--border);border-radius:8px;background:var(--surface2);font-family:'Roboto Mono',monospace;font-size:0.65rem;line-height:1.6;color:var(--muted);"></div>
       </div>
     </div>
 
@@ -288,7 +289,18 @@
 
         <!-- TAB 0: CLOCK IN -->
         <div class="tab-pane active" id="tab-0">
-          <div class="card-title">Morning Check-In</div>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1rem;">
+            <div class="card-title" style="margin-bottom:0">Morning Check-In</div>
+            <label style="display:flex;align-items:center;gap:0.4rem;cursor:pointer;">
+              <span style="font-family:'Roboto Mono',monospace;font-size:0.52rem;letter-spacing:0.07em;text-transform:uppercase;color:var(--muted);">Exempt</span>
+              <span style="position:relative;display:inline-block;width:34px;height:18px;">
+                <input type="checkbox" id="ci-exempt" onchange="updateExemptState()" style="opacity:0;width:0;height:0;position:absolute;">
+                <span id="exempt-slider" style="position:absolute;cursor:pointer;inset:0;background:var(--border);border-radius:18px;transition:0.2s;">
+                  <span id="exempt-knob" style="position:absolute;height:12px;width:12px;left:3px;top:3px;background:white;border-radius:50%;transition:0.2s;display:block;"></span>
+                </span>
+              </span>
+            </label>
+          </div>
           <div class="form-row single">
             <div><label>Date</label><input type="date" id="ci-date" onchange="updateDateBadges()"></div>
           </div>
@@ -440,6 +452,28 @@ let entries = JSON.parse(localStorage.getItem('flowtrack_v3') || '[]');
 // Individual tab saves write here; Add Log commits to entries
 let draft = JSON.parse(localStorage.getItem('flowtrack_draft') || '{}');
 
+// ── Day Exemption ──
+function updateExemptState(){
+  const exempt = document.getElementById('ci-exempt').checked;
+  const slider = document.getElementById('exempt-slider');
+  const knob   = document.getElementById('exempt-knob');
+  if(exempt){
+    slider.style.background = 'var(--accent)';
+    knob.style.transform = 'translateX(18px)';
+    // Disable arrival select — exempt days don't need it
+    document.getElementById('ci-arrival').disabled = true;
+    document.getElementById('ci-arrival').value = '';
+    document.getElementById('ci-dot').style.background = 'var(--muted)';
+    document.getElementById('ci-label').textContent = 'Day exempt — will not affect scores';
+    document.getElementById('ci-pct').textContent = '';
+  } else {
+    slider.style.background = 'var(--border)';
+    knob.style.transform = 'translateX(0)';
+    document.getElementById('ci-arrival').disabled = false;
+    previewClockIn();
+  }
+}
+
 function saveDraft(){
   localStorage.setItem('flowtrack_draft', JSON.stringify(draft));
 }
@@ -555,13 +589,13 @@ async function pullFromSheets() {
     setSyncStatus('offline');
   }
 }
-// entry shape: { date, flows, clockout, note, arrival, gym, homeWorkout, stretch, sleep }
+// entry shape: { date, flows, clockout, note, arrival, exempt, gym, homeWorkout, stretch, sleep }
 // each field optional — saved independently per tab
 
 const savedTheme = localStorage.getItem('flowtrack_theme') || 'dark';
 let isDark = savedTheme === 'dark';
 document.documentElement.setAttribute('data-theme', savedTheme);
-let chartViews = { work: 'week', full: 'month' };
+let chartViews = { work: 'week', full: 'week' };
 let chartOffsets = { work: 0, full: 0 };
 let chartDays = { work: [], full: [] };
 let chartInsts = { work: null, full: null };
@@ -660,12 +694,14 @@ function periodLabel(chartId){
 
 // ── SCORING ──
 function workScore(e){
+  if(e.exempt)return null;
   if(e.flows==null)return null;
   const{effective}=calcEffective(e.flows,e.clockout||0);
   return Math.round((effective/GOAL)*100);
 }
 function lifestyleScore(e){
   // arrival (16.67%), gym+stretch (16.67%), sleep (16.67%) = 50% total weight
+  if(e.exempt)return null;
   if(e.arrival==null||e.gym==null||e.sleep==null)return null;
   const gymPct=(e.gym?100:e.homeWorkout?50:0)+(e.stretch?5:0);
   return(e.arrival+gymPct+e.sleep)/3;
@@ -751,6 +787,7 @@ function saveClockIn(){
   const arrival=parseInt(arrivalVal);
   draft.date=date;
   draft.arrival=arrival;
+  draft.exempt=document.getElementById('ci-exempt').checked;
   saveDraft();
   markTabFilled(0,true);
   flashSaved('ci-save-btn');
@@ -960,6 +997,7 @@ function commitLog(){
   // Write entire draft to entries
   upsertEntry(draft.date, {
     arrival: draft.arrival,
+    exempt:  draft.exempt || false,
     flows:   draft.flows,
     clockout:draft.clockout,
     note:    draft.note,
@@ -1166,18 +1204,37 @@ function renderLog(){
       }
     }
     const fdBadge=fd!==null?`<span style="font-family:'Roboto Mono',monospace;font-size:0.6rem;color:${fdC};margin-left:0.4rem;border:1px solid ${fdC};padding:0.1rem 0.35rem;border-radius:4px">★ ${fd}%</span>`:'';
+    // 4-segment mini breakdown
+    const arrPct=e.arrival!=null?e.arrival:null;
+    const gymPct2=e.gym!=null?(e.gym?100:e.homeWorkout?50:0)+(e.stretch?5:0):null;
+    const slpPct=e.sleep!=null?e.sleep:null;
+    const segBar=(val,lbl)=>{
+      if(val===null) return `<div style="flex:1;text-align:center;opacity:0.4"><div style="font-family:'Roboto Mono',monospace;font-size:0.6rem;font-weight:700;color:var(--muted)">—</div><div style="font-family:'Roboto Mono',monospace;font-size:0.45rem;letter-spacing:0.07em;text-transform:uppercase;color:var(--muted);margin-top:0.1rem">${lbl}</div></div>`;
+      const sc=spectrumColor(val);
+      return `<div style="flex:1;text-align:center"><div style="font-family:'Roboto Mono',monospace;font-size:0.6rem;font-weight:700;color:${sc}">${Math.round(val)}%</div><div style="font-family:'Roboto Mono',monospace;font-size:0.45rem;letter-spacing:0.07em;text-transform:uppercase;color:var(--muted);margin-top:0.1rem">${lbl}</div></div>`;
+    };
+    const hasAnySegment = arrPct!==null||pct!==null||gymPct2!==null||slpPct!==null;
+    const segRow = hasAnySegment ? `<div style="display:flex;gap:0.25rem;margin-top:0.5rem;padding:0.4rem 0.5rem;background:var(--surface2);border-radius:6px;border:1px solid var(--border)">
+      ${segBar(arrPct,'clock in')}
+      ${segBar(pct,'work')}
+      ${segBar(gymPct2,'gym')}
+      ${segBar(slpPct,'sleep')}
+    </div>` : '';
+    const exemptBadge = e.exempt ? `<span style="font-family:'Roboto Mono',monospace;font-size:0.52rem;letter-spacing:0.06em;text-transform:uppercase;color:var(--muted);border:1px solid var(--border);border-radius:4px;padding:0.1rem 0.3rem;margin-left:0.3rem">exempt</span>` : '';
     return`<div class="log-item">
       <div class="log-dot" style="background:${c};${glow}"></div>
       <div style="flex:1;min-width:0">
         <div style="display:flex;align-items:baseline;gap:0.4rem;flex-wrap:wrap">
           <span class="log-date">${dateStr}</span>
           ${flowsHTML}
+          ${exemptBadge}
           ${fdBadge}
           ${pct!==null?`<span class="log-pct" style="color:${c};margin-left:auto">${pct}%</span>`:''}
           <button class="log-delete" onclick="deleteEntry('${e.date}')" title="Delete">✕</button>
         </div>
-        ${e.note?`<div class="log-note">work: "${e.note}"</div>`:''}
-        ${e.eodNote?`<div class="log-note">day: "${e.eodNote}"</div>`:''  }
+        ${segRow}
+        ${e.note?`<div class="log-note" style="margin-top:0.35rem">work: "${e.note}"</div>`:''}
+        ${e.eodNote?`<div class="log-note">day: "${e.eodNote}"</div>`:''}
       </div>
     </div>`;
   }).join('');
@@ -1231,12 +1288,23 @@ function renderStats(){
   // Streak calc — stored globally so chart plugin can read them
   const STREAK_THRESHOLD=85;
 
-  // Weekday consecutive helper: Fri→Mon = 1 step, otherwise 1 calendar day
+  // Weekday consecutive helper — skips exempt days and weekends
+  // Returns true if b is the next valid (non-exempt, non-weekend) workday after a
   function isConsecWeekday(a,b){
-    // a=earlier date, b=later date
-    const diff=Math.round((b-a)/86400000);
-    if(a.getDay()===5) return diff===3; // Friday to Monday
-    return diff===1;
+    // Walk forward from a, skipping weekends and exempt dates
+    const exemptDates=new Set(entries.filter(e=>e.exempt).map(e=>e.date));
+    let cur=new Date(a);
+    let steps=0;
+    while(steps<14){
+      cur.setDate(cur.getDate()+1);
+      const day=cur.getDay();
+      const dateStr=fmtDate(cur);
+      if(day===0||day===6) continue;      // skip weekend
+      if(exemptDates.has(dateStr)) continue; // skip exempt
+      // cur is next valid workday
+      return fmtDate(cur)===fmtDate(b);
+    }
+    return false;
   }
 
   // Work streak ≥85% — track current (live) and best (all-time)
@@ -1287,6 +1355,71 @@ function renderStats(){
   if(fdBestStreakEl) fdBestStreakEl.textContent=window._fdStreak||'—';
   const fdFlowEl=document.getElementById('stat-fd-flow-state');
   if(fdFlowEl) fdFlowEl.style.display=curFdLive>=5?'inline':'none';
+
+  // ── Weekly summary: show Mon–Fri if today is Fri and Friday is fully logged ──
+  updateWeeklySummary();
+}
+
+function updateWeeklySummary(){
+  const workSummEl = document.getElementById('work-weekly-summary');
+  const daySummEl  = document.getElementById('day-weekly-summary');
+  if(!workSummEl||!daySummEl) return;
+
+  const today = new Date();
+  const isFriday = today.getDay()===5;
+  const wsStr = fmtDate(weekStart(today));
+  const weStr = fmtDate(weekEnd(today));
+
+  // Only show Mon–Sat (stays visible until Monday)
+  // Hide on Monday+
+  if(today.getDay()===1||today.getDay()===0){
+    workSummEl.style.display='none';
+    daySummEl.style.display='none';
+    return;
+  }
+
+  // Get this week's entries (non-exempt)
+  const wk = entries.filter(e=>e.date>=wsStr&&e.date<=weStr&&!e.exempt);
+  // Check if Friday's entry is fully logged (has flows AND full day score)
+  const friStr = (() => {
+    const d = new Date(today);
+    // find this week's Friday
+    const day = d.getDay();
+    const diff = day<=5 ? 5-day : 0;
+    d.setDate(d.getDate()+diff);
+    return fmtDate(d);
+  })();
+  const friEntry = entries.find(e=>e.date===friStr);
+  const friComplete = friEntry && workScore(friEntry)!==null;
+
+  if(!friComplete){
+    workSummEl.style.display='none';
+    daySummEl.style.display='none';
+    return;
+  }
+
+  // Work summary
+  const wkWS = wk.map(e=>workScore(e)).filter(v=>v!==null);
+  const wkFlows = wk.reduce((sum,e)=>sum+(e.flows||0),0);
+  const wkHours = (wkFlows*0.5).toFixed(2).replace(/\.?0+$/,'');
+  const wkFlowsDisp = Number.isInteger(wkFlows)?wkFlows:wkFlows.toFixed(1).replace(/\.?0+$/,'');
+  const wkAvgWork = wkWS.length?Math.round(wkWS.reduce((a,b)=>a+b,0)/wkWS.length):null;
+
+  if(wkAvgWork!==null){
+    workSummEl.style.display='block';
+    workSummEl.innerHTML =
+      `<span style="color:var(--title-color);font-weight:700;">This week's score: ${wkAvgWork}%</span><br>`+
+      `This week you did a total of ${wkFlowsDisp}ƒ — ${wkHours} hours of uninterrupted work.`;
+  }
+
+  // Day summary
+  const wkFD = wk.map(e=>fullDayScore(e)).filter(v=>v!==null);
+  const wkAvgFD = wkFD.length?Math.round(wkFD.reduce((a,b)=>a+b,0)/wkFD.length):null;
+  if(wkAvgFD!==null){
+    daySummEl.style.display='block';
+    daySummEl.innerHTML =
+      `<span style="color:var(--title-color);font-weight:700;">This week's score: ${wkAvgFD}%</span>`;
+  }
 }
 
 // ═══════════════════════════════════════════════
@@ -1300,6 +1433,9 @@ function resetForms(){
   updateDateBadges();
   // Reset clock-in
   document.getElementById('ci-arrival').value='';
+  document.getElementById('ci-arrival').disabled=false;
+  document.getElementById('ci-exempt').checked=false;
+  updateExemptState();
   previewClockIn();
   // Reset work
   document.getElementById('w-flows').value='';
@@ -1407,6 +1543,7 @@ if(Object.keys(draft).length > 0){
     document.getElementById('ov-date').value=draft.date;
   }
   if(draft.arrival!=null) document.getElementById('ci-arrival').value=draft.arrival;
+  if(draft.exempt){ document.getElementById('ci-exempt').checked=true; updateExemptState(); }
   if(draft.flows!=null)   document.getElementById('w-flows').value=draft.flows;
   if(draft.clockout!=null)document.getElementById('w-clockout').value=draft.clockout;
   if(draft.note)          document.getElementById('w-note').value=draft.note;
@@ -1426,7 +1563,7 @@ previewClockIn();
 updateWorkPreview();
 updateEodPreview();
 setView('work','week');
-setView('full','month');
+setView('full','week');
 render();
 // Pull latest data from Sheets on load (merges with localStorage fallback)
 pullFromSheets();
